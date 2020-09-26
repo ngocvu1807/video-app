@@ -27,8 +27,12 @@ export class Server {
     this.handleSocketConnection();
   }
 
-  // router handler
+  // configure app
+  private configureApp(): void {
+    this.app.use(express.static(path.join(__dirname, '../public')));
+  }
 
+  // router handler
   handleRoutes() {
     this.app.get('/', (req, res) => {
       res.sendFile('index.html');
@@ -36,12 +40,9 @@ export class Server {
   }
 
   // socket connection
-
   private handleSocketConnection(): void {
     this.io.on('connection', (socket) => {
-      console.log('New WS Connection...');
-      console.log(socket.id);
-
+      console.log(`New connection of ${socket.id}`);
       const existingSocket = this.activeSockets.find(
         (existingSocket) => existingSocket === socket.id
       );
@@ -50,7 +51,7 @@ export class Server {
         this.activeSockets.push(socket.id);
 
         socket.emit('update-user-list', {
-          user: this.activeSockets.filter(
+          users: this.activeSockets.filter(
             (existingSocket) => existingSocket !== socket.id
           ),
         });
@@ -58,17 +59,36 @@ export class Server {
         socket.broadcast.emit('update-user-list', {
           users: [socket.id],
         });
+      }
 
+      socket.on('call-user', (data: any) => {
+        socket.to(data.to).emit('call-made', {
+          offer: data.offer,
+          socket: socket.id,
+        });
+      });
+
+      socket.on('make-answer', (data) => {
+        socket.to(data.to).emit('answer-made', {
+          socket: socket.id,
+          answer: data.answer,
+        });
+      });
+
+      socket.on('reject-call', (data) => {
+        socket.to(data.from).emit('call-rejected', {
+          socket: socket.id,
+        });
+      });
+
+      socket.on('disconnect', () => {
+        this.activeSockets = this.activeSockets.filter(
+          (existingSocket) => existingSocket !== socket.id
+        );
         socket.broadcast.emit('remove-user', {
           socketId: socket.id,
         });
-
-        socket.on('disconnect', () => {
-          this.activeSockets = this.activeSockets.filter(
-            (existingSocket) => existingSocket !== socket.id
-          );
-        });
-      }
+      });
     });
   }
 
@@ -76,11 +96,5 @@ export class Server {
     this.httpServer.listen(this.DEFAULT_PORT, () => {
       callback(this.DEFAULT_PORT);
     });
-  }
-
-  // configure app
-
-  private configureApp(): void {
-    this.app.use(express.static(path.join(__dirname, '../public')));
   }
 }

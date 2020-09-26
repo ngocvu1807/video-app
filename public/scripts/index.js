@@ -1,42 +1,18 @@
-navigator.getUserMedia(
-  {
-    video: true,
-    audio: true,
-  },
-  (stream) => {
-    const localVideo = document.getElementById('local-video');
-    if (localVideo) {
-      localVideo.srcObject = stream;
-    }
-  },
-  (error) => {
-    console.warn(error.message);
-  }
-);
-
 const socket = io();
 
-socket.on('update-user-list', ({ users }) => {
-  updateUserList(users);
-});
+const existingCalls = [];
 
-socket.on('remove-user', ({ socketId }) => {
-  const elToRemove = document.getElementById(socketId);
+const { RTCPeerConnection, RTCSessionDescription } = window;
 
-  if (elToRemove) {
-    elToRemove.remove();
-  }
-});
+const peerConnection = new RTCPeerConnection();
 
-function updateUserList(socketIds) {
-  const activeUserContainer = document.getElementById('active-user-container');
+function unselectedUsersFromList() {
+  const alreadySelectedUser = document.querySelectorAll(
+    '.active-user.active-user--selected'
+  );
 
-  socketIds.forEach((socketId) => {
-    const alreadyExistingUser = document.getElementById(socketId);
-    if (!alreadyExistingUser) {
-      const userContainerEl = createUserItemContainer(socketId);
-      activeUserContainer.appendChild(userContainerEl);
-    }
+  alreadySelectedUser.forEach((el) => {
+    el.setAttribute('class', 'active-user');
   });
 }
 
@@ -62,6 +38,112 @@ function createUserItemContainer(socketId) {
   return userContainerEl;
 }
 
-function unselectedUsersFromList() {}
+async function callUser(socketId) {
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(new RTCSessionDescription(offer));
 
-function callUser() {}
+  socket.emit('call-user', {
+    offer,
+    to: socketId,
+  });
+}
+
+function updateUserList(socketIds) {
+  const activeUserContainer = document.getElementById('active-user-container');
+
+  socketIds.forEach((socketId) => {
+    const alreadyExistingUser = document.getElementById(socketId);
+    if (!alreadyExistingUser) {
+      const userContainerEl = createUserItemContainer(socketId);
+
+      activeUserContainer.appendChild(userContainerEl);
+    }
+  });
+}
+
+socket.on('update-user-list', ({ users }) => {
+  updateUserList(users);
+});
+
+socket.on('remove-user', ({ socketId }) => {
+  const elToRemove = document.getElementById(socketId);
+
+  if (elToRemove) {
+    elToRemove.remove();
+  }
+});
+
+socket.on('call-made', async (data) => {
+  let getCalled = false;
+  if (getCalled) {
+    const confirmed = confirm(
+      `User "Socket: ${data.socket}" wants to call you. Do accept this call?`
+    );
+
+    if (!confirmed) {
+      socket.emit('reject-call', {
+        from: data.socket,
+      });
+
+      return;
+    }
+  }
+
+  await peerConnection.setRemoteDescription(
+    new RTCSessionDescription(data.offer)
+  );
+
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(new RTCSessionDescription(answer));
+
+  socket.emit('make-answer', {
+    answer,
+    to: data.socket,
+  });
+  getCalled = true;
+});
+
+socket.on('answer-made', async (data) => {
+  await peerConnection.setRemoteDescription(
+    new RTCSessionDescription(data.answer)
+  );
+
+  let isAlreadyCalling = false;
+
+  if (!isAlreadyCalling) {
+    callUser(data.socket);
+    isAlreadyCalling = true;
+  }
+});
+
+socket.on('call-rejected', (data) => {
+  alert(`User: "Socket: ${data.socket}" rejected your call`);
+  unselectedUsersFromList();
+});
+
+peerConnection.ontrack = function ({ streams: [stream] }) {
+  const remoteVideo = document.getElementById('remote-video');
+  if (remoteVideo) {
+    remoteVideo.srcObject = stream;
+  }
+};
+
+navigator.getUserMedia(
+  {
+    video: true,
+    audio: true,
+  },
+  (stream) => {
+    const localVideo = document.getElementById('local-video');
+    if (localVideo) {
+      localVideo.srcObject = stream;
+    }
+
+    stream
+      .getTracks()
+      .forEach((track) => peerConnection.addTrack(track, stream));
+  },
+  (error) => {
+    console.warn(error.message);
+  }
+);
